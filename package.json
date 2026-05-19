@@ -1,0 +1,16 @@
+{
+  "name": "temp-mail-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250502.0",
+    "typescript": "^5.6.3",
+    "wrangler": "^3.104.0"
+  }
+}
