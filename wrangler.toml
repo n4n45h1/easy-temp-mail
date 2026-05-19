@@ -1,0 +1,16 @@
+name = "temp-mail-worker"
+main = "src/index.ts"
+compatibility_date = "2025-05-01"
+
+kv_namespaces = [
+  { binding = "name", id = "your-kv-id" }
+]
+
+[vars]
+DOMAINS = "your-domain.com"
+# Optional: set to enable simple auth for the API
+# API_KEY = "set-me"
+# Optional: forward all messages to another mailbox
+# FORWARD_TO = "you@example.com"
+# Optional: max messages per address (default 20)
+# MAX_MESSAGES = "20"
