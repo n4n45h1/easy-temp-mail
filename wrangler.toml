@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2025-05-01"
 
 kv_namespaces = [
-  { binding = "name", id = "your-kv-id" }
+  { binding = "MESSAGES", id = "change-me" }
 ]
 
 [vars]
