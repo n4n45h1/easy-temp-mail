@@ -1,3 +1,5 @@
+import PostalMime from "postal-mime"; // postal-mine追加
+
 interface Env {
   MESSAGES: KVNamespace;
   DOMAINS: string;
@@ -91,34 +93,44 @@ export default {
     return json({ error: "Not found" }, 404);
   },
 
+  // メール処理を修正
   async email(message: EmailMessage, env: Env): Promise<void> {
     const domains = parseDomains(env.DOMAINS);
     const id = crypto.randomUUID();
     const to = extractAddress(message.to) || message.to || "";
     const from = extractAddress(message.from) || message.from || "";
-    const subject = message.headers.get("subject") || "";
-    const raw = await readRaw(message.raw);
-    const text = extractPlainText(raw);
-    const preview = text ? text.slice(0, 280) : extractPreview(raw, 280);
+
+    // メール生データを ArrayBuffer として取得
+    const rawResponse = new Response(message.raw);
+    const arrayBuffer = await rawResponse.arrayBuffer();
+
+    // postal-mime使う
+    const parser = new PostalMime();
+    const parsed = await parser.parse(arrayBuffer);
+
+    // パースされデータを抽出
+    const subject = parsed.subject || "(無題)";
+    const text = parsed.text || parsed.html?.replace(/<[^>]*>/g, "") || null; // textが無ければHTMLからタグを剥ぎ取りま
+    const preview = text ? text.slice(0, 280) : "";
     const receivedAt = new Date().toISOString();
 
     const normalizedTo = normalizeAddress(to, domains);
     if (!normalizedTo) {
       return;
     }
+
     const stored: StoredMessage = {
       id,
       to: normalizedTo,
       from,
       subject,
       receivedAt,
-      raw,
+      raw: new TextDecoder().decode(arrayBuffer).slice(0, 200000), // フロント表示の予備用
       preview,
       text,
     };
 
     await env.MESSAGES.put(`msg:${id}`, JSON.stringify(stored));
-
     await addToAddressIndexes(env, normalizedTo, id);
 
     if (env.FORWARD_TO) {
@@ -127,6 +139,7 @@ export default {
   },
 };
 
+/* --- ユーティリティ関数（変更なし） --- */
 function isAuthorized(request: Request, apiKey: string): boolean {
   const header = request.headers.get("Authorization");
   if (!header) return false;
@@ -163,7 +176,6 @@ function normalizeAddress(input: string, domains: string[]): string | null {
     if (!domains.includes(domain)) return null;
     return `${local}@${domain}`;
   }
-
   const defaultDomain = domains[0];
   if (!defaultDomain) return null;
   return `${trimmed}@${defaultDomain}`;
@@ -189,7 +201,6 @@ async function ensureAddressIndex(env: Env, address: string): Promise<void> {
   if (!existing) {
     await env.MESSAGES.put(key, JSON.stringify([]));
   }
-
   const baseAddress = getBaseAddress(address).toLowerCase();
   if (baseAddress !== address.toLowerCase()) {
     const baseKey = `addr:${baseAddress}`;
@@ -227,18 +238,6 @@ async function addToAddressIndexes(env: Env, address: string, id: string): Promi
   }
 }
 
-async function readRaw(stream: ReadableStream): Promise<string> {
-  const response = new Response(stream);
-  const text = await response.text();
-  return text.slice(0, 200000);
-}
-
-function extractPreview(raw: string, maxLength: number): string {
-  const parts = raw.split("\n\n");
-  const body = parts.length > 1 ? parts.slice(1).join("\n\n") : raw;
-  return body.replace(/\s+/g, " ").trim().slice(0, maxLength);
-}
-
 function cleanTextForDisplay(input: string): string {
   const normalized = input.replace(/\0/g, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = normalized.split("\n");
@@ -255,76 +254,6 @@ function cleanTextForDisplay(input: string): string {
     cleaned.push(trimmedEnd);
   }
   return cleaned.join("\n").trim();
-}
-
-function extractPlainText(raw: string): string | null {
-  const split = splitHeadersBody(raw);
-  if (!split) return null;
-
-  const boundary = getBoundary(split.headers);
-  if (boundary) {
-    const parts = split.body.split(`--${boundary}`);
-    for (const part of parts) {
-      const trimmed = part.replace(/^\r?\n/, "").trim();
-      if (!trimmed || trimmed === "--") continue;
-      const partSplit = splitHeadersBody(trimmed);
-      if (!partSplit) continue;
-      if (hasPlainText(partSplit.headers)) {
-        return decodeBody(partSplit.body, partSplit.headers);
-      }
-    }
-    return null;
-  }
-
-  if (hasPlainText(split.headers)) {
-    return decodeBody(split.body, split.headers);
-  }
-
-  return null;
-}
-
-function splitHeadersBody(raw: string): { headers: string; body: string } | null {
-  const match = raw.match(/\r?\n\r?\n/);
-  if (!match || match.index === undefined) return null;
-  const index = match.index;
-  return {
-    headers: raw.slice(0, index),
-    body: raw.slice(index + match[0].length),
-  };
-}
-
-function getBoundary(headers: string): string | null {
-  const match = headers.match(/boundary="?([^";]+)"?/i);
-  return match && match[1] ? match[1] : null;
-}
-
-function hasPlainText(headers: string): boolean {
-  return /content-type:\s*text\/plain/i.test(headers);
-}
-
-function decodeBody(body: string, headers: string): string {
-  const encodingMatch = headers.match(/content-transfer-encoding:\s*([^\s;]+)/i);
-  const encoding = encodingMatch ? encodingMatch[1].toLowerCase() : "7bit";
-  if (encoding === "base64") {
-    const cleaned = body.replace(/\s+/g, "");
-    try {
-      return atob(cleaned);
-    } catch {
-      return body.trim();
-    }
-  }
-  if (encoding === "quoted-printable") {
-    return decodeQuotedPrintable(body);
-  }
-  return body.trim();
-}
-
-function decodeQuotedPrintable(input: string): string {
-  const softBreaksRemoved = input.replace(/=\r?\n/g, "");
-  return softBreaksRemoved.replace(/=([0-9A-Fa-f]{2})/g, (_, hex: string) => {
-    const code = Number.parseInt(hex, 16);
-    return String.fromCharCode(code);
-  });
 }
 
 function extractAddress(value: string): string {
